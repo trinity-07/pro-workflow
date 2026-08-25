@@ -14,14 +14,6 @@ function ensureDir(dir) {
 }
 
 async function main() {
-  const rawSessionId = process.env.CLAUDE_SESSION_ID || String(process.ppid) || 'default';
-  // Sanitize sessionId to prevent path traversal
-  const sessionId = rawSessionId.replace(/[^a-zA-Z0-9_-]/g, '') || 'default';
-  const tempDir = getTempDir();
-  ensureDir(tempDir);
-
-  const trackFile = path.join(tempDir, `read-track-${sessionId}.json`);
-
   let input = '';
   try {
     input = fs.readFileSync(0, 'utf8');
@@ -35,6 +27,16 @@ async function main() {
   } catch (e) {
     process.exit(0);
   }
+
+  // The hook payload's session_id is the only id stable across a session. process.ppid
+  // is a fresh shim process on every hook invocation, so it can never accumulate state.
+  const rawSessionId = parsed.session_id || process.env.CLAUDE_SESSION_ID || 'default';
+  // Sanitize sessionId to prevent path traversal
+  const sessionId = String(rawSessionId).replace(/[^a-zA-Z0-9_-]/g, '') || 'default';
+  const tempDir = getTempDir();
+  ensureDir(tempDir);
+
+  const trackFile = path.join(tempDir, `read-track-${sessionId}.json`);
 
   const toolInput = parsed.tool_input || {};
   const filePath = toolInput.file_path || '';

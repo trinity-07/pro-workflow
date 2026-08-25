@@ -27,12 +27,26 @@ function getStore() {
   return null;
 }
 
+function readSessionId() {
+  // The hook payload's session_id is the only id stable across a session, and is the
+  // same id the other hooks see. process.ppid is a fresh shim process per invocation,
+  // so a row keyed on it can never be found or updated by any later hook.
+  let parsed = {};
+  try {
+    parsed = JSON.parse(fs.readFileSync(0, 'utf8'));
+  } catch (e) {
+    parsed = {};
+  }
+  const raw = parsed.session_id || process.env.CLAUDE_SESSION_ID || 'default';
+  return String(raw).replace(/[^a-zA-Z0-9_-]/g, '') || 'default';
+}
+
 async function main() {
   const projectRoot = findProjectRoot();
   const projectName = path.basename(projectRoot);
   const claudeDir = path.join(projectRoot, '.claude');
   const learnedFile = path.join(claudeDir, 'LEARNED.md');
-  const sessionId = process.env.CLAUDE_SESSION_ID || String(process.ppid) || 'default';
+  const sessionId = readSessionId();
 
   let store = null;
   try {

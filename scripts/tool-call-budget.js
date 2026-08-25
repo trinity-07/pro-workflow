@@ -14,9 +14,17 @@ function ensureDir(dir) {
 }
 
 async function main() {
-  const rawSessionId = process.env.CLAUDE_SESSION_ID || String(process.ppid) || 'default';
+  // The hook payload's session_id is the only id stable across a session. process.ppid
+  // is a fresh shim process on every hook invocation, so the counter never accumulated.
+  let parsed = {};
+  try {
+    parsed = JSON.parse(fs.readFileSync(0, 'utf8'));
+  } catch (e) {
+    parsed = {};
+  }
+  const rawSessionId = parsed.session_id || process.env.CLAUDE_SESSION_ID || 'default';
   // Sanitize sessionId to prevent path traversal
-  const sessionId = rawSessionId.replace(/[^a-zA-Z0-9_-]/g, '') || 'default';
+  const sessionId = String(rawSessionId).replace(/[^a-zA-Z0-9_-]/g, '') || 'default';
   const tempDir = getTempDir();
   ensureDir(tempDir);
 

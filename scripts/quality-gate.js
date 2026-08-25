@@ -51,8 +51,21 @@ function getAdaptiveThreshold(store) {
   }
 }
 
+function readSessionId() {
+  // The hook payload's session_id is the only id stable across a session. process.ppid
+  // is a fresh shim process on every hook invocation, so it can never accumulate state.
+  let parsed = {};
+  try {
+    parsed = JSON.parse(fs.readFileSync(0, 'utf8'));
+  } catch (e) {
+    parsed = {};
+  }
+  const raw = parsed.session_id || process.env.CLAUDE_SESSION_ID || 'default';
+  return String(raw).replace(/[^a-zA-Z0-9_-]/g, '') || 'default';
+}
+
 async function main() {
-  const sessionId = process.env.CLAUDE_SESSION_ID || String(process.ppid) || 'default';
+  const sessionId = readSessionId();
 
   let count = 1;
   let store = null;

@@ -3,7 +3,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "tool == \"Edit\" || tool == \"Write\"",
+        "matcher": "Edit|Write",
         "hooks": [
           {
             "type": "command",
@@ -66,7 +66,7 @@
         "description": "Git operation guards: quality gates before commit, LLM commit validation, wrap-up before push"
       },
       {
-        "matcher": "tool == \"Edit\" || tool == \"Write\"",
+        "matcher": "Edit|Write",
         "hooks": [
           {
             "type": "command",
@@ -78,7 +78,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "tool == \"Edit\" && tool_input.file_path matches \"\\\\.(ts|tsx|js|jsx|py|go|rs)$\"",
+        "matcher": "Edit",
         "hooks": [
           {
             "type": "command",
@@ -88,7 +88,7 @@
         "description": "Check for common issues after code edits"
       },
       {
-        "matcher": "tool == \"Bash\" && tool_input.command matches \"(npm test|pnpm test|yarn test|pytest|go test|cargo test)\"",
+        "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
@@ -344,30 +344,6 @@
           }
         ],
         "description": "Auto-detect project type and suggest configuration on init"
-      }
-    ],
-    "WorktreeCreate": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/worktree-create.js\""
-          }
-        ],
-        "description": "Log worktree creation for parallel session tracking"
-      }
-    ],
-    "WorktreeRemove": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/worktree-remove.js\""
-          }
-        ],
-        "description": "Cleanup worktree tracking on removal"
       }
     ],
     "CwdChanged": [

@@ -45,7 +45,16 @@ function getStore() {
 async function main() {
   const projectRoot = findProjectRoot();
   const projectName = path.basename(projectRoot);
-  const sessionId = process.env.CLAUDE_SESSION_ID || String(process.ppid) || 'default';
+  // Must match the id session-start.js recorded, otherwise getSession() returns null
+  // and ended_at is never written. process.ppid differs on every hook invocation.
+  let payload = {};
+  try {
+    payload = JSON.parse(fs.readFileSync(0, 'utf8'));
+  } catch (e) {
+    payload = {};
+  }
+  const rawSessionId = payload.session_id || process.env.CLAUDE_SESSION_ID || 'default';
+  const sessionId = String(rawSessionId).replace(/[^a-zA-Z0-9_-]/g, '') || 'default';
 
   let store = null;
   try {

@@ -29,6 +29,13 @@ async function main() {
         return;
       }
 
+      // Only inspect source files. Previously expressed as a matcher in hooks.json,
+      // which the hook runner does not evaluate; enforced here instead.
+      if (!/\.(ts|tsx|js|jsx|py|go|rs)$/.test(filePath)) {
+        console.log(data);
+        return;
+      }
+
       const content = fs.readFileSync(filePath, 'utf8');
       const lines = content.split('\n');
       const issues = [];
