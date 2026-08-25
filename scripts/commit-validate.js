@@ -12,17 +12,28 @@ function readStdin() {
   });
 }
 
+/**
+ * Split a command into its heredoc (if any) and the command text with that
+ * heredoc's span removed.
+ *
+ * Everything inside a heredoc body is data, not shell syntax: a `-m`, a
+ * `--message`, or the literal words `git commit` written there are prose in
+ * someone's commit message or file content, not flags and not a commit. Every
+ * pattern test in this hook that asks "what shape is this command" must run
+ * against `scan`, never the raw string.
+ */
+function stripHeredoc(command) {
+  const heredoc = command.match(/<<-?\s*'?([A-Za-z_][A-Za-z0-9_]*)'?\s*\n([\s\S]*?)\n\s*\1\s*$/m);
+  const scan = heredoc
+    ? command.slice(0, heredoc.index) + command.slice(heredoc.index + heredoc[0].length)
+    : command;
+  return { heredoc, scan };
+}
+
 function extractMessage(command) {
   if (!command) return { msg: null, form: 'empty' };
 
-  const heredocAny = command.match(/<<-?\s*'?([A-Za-z_][A-Za-z0-9_]*)'?\s*\n([\s\S]*?)\n\s*\1\s*$/m);
-
-  // Flag scanning must skip the heredoc body. A `-m` or `--message` written
-  // inside the message text is prose, not a flag — without this, a commit
-  // message that merely mentions `-m` gets parsed as the message itself.
-  const scan = heredocAny
-    ? command.slice(0, heredocAny.index) + command.slice(heredocAny.index + heredocAny[0].length)
-    : command;
+  const { heredoc: heredocAny, scan } = stripHeredoc(command);
 
   const shortFlag = scan.match(/(?:^|\s)-m\s+(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|(\S+))/);
   if (shortFlag) {
@@ -38,12 +49,12 @@ function extractMessage(command) {
 
   if (heredocAny) return { msg: heredocAny[2].split('\n')[0], form: 'heredoc' };
 
-  if (/(?:^|\s)-F(?:\s+\S+|=\S+)/.test(command) || /--file(?:=|\s+)\S+/.test(command)) {
+  if (/(?:^|\s)-F(?:\s+\S+|=\S+)/.test(scan) || /--file(?:=|\s+)\S+/.test(scan)) {
     return { msg: null, form: 'file' };
   }
 
-  if (/\bgit\s+(?:-[^\s]+\s+)*commit\b/.test(command)) {
-    const afterCommit = command.split(/\bcommit\b/)[1] || '';
+  if (/\bgit\s+(?:-[^\s]+\s+)*commit\b/.test(scan)) {
+    const afterCommit = scan.split(/\bcommit\b/)[1] || '';
     const hasExplicitFlag = /(?:-m|--message|-F|--file|--amend)\b/.test(afterCommit);
     if (!hasExplicitFlag) return { msg: null, form: 'editor' };
     return { msg: null, form: 'unknown' };
@@ -72,7 +83,9 @@ function validate(msg) {
   // Only grade actual commits. extractMessage() matches heredocs and -m before
   // it checks for `git commit`, so without this gate a plain `cat > f <<'EOF'`
   // or `python3 -m pip install x` is parsed as a commit message and rejected.
-  if (!/\bgit\s+(?:-\S+\s+)*commit\b/.test(command)) process.exit(0);
+  // The gate reads the heredoc-stripped text: `git commit` appearing inside a
+  // heredoc body is documentation being written to a file, not a commit.
+  if (!/\bgit\s+(?:-\S+\s+)*commit\b/.test(stripHeredoc(command).scan)) process.exit(0);
   const { msg, form } = extractMessage(command);
 
   if (msg === null) {
