@@ -14,7 +14,13 @@ function pickProvider(): EmbeddingProvider | null {
   return null;
 }
 
-function postJSON(urlStr: string, body: unknown, headers: Record<string, string>): Promise<{ status: number; body: string }> {
+interface PostResult {
+  status: number;
+  body: string;
+  headers: Record<string, string | string[] | undefined>;
+}
+
+function postJSON(urlStr: string, body: unknown, headers: Record<string, string>): Promise<PostResult> {
   return new Promise((resolve, reject) => {
     const url = new URL(urlStr);
     const data = JSON.stringify(body);
@@ -30,7 +36,7 @@ function postJSON(urlStr: string, body: unknown, headers: Record<string, string>
     }, res => {
       let chunks = '';
       res.on('data', c => { chunks += c; });
-      res.on('end', () => resolve({ status: res.statusCode || 0, body: chunks }));
+      res.on('end', () => resolve({ status: res.statusCode || 0, body: chunks, headers: res.headers }));
     });
     req.setTimeout(30000, () => req.destroy(new Error('embedding request timeout')));
     req.on('error', reject);
@@ -39,13 +45,68 @@ function postJSON(urlStr: string, body: unknown, headers: Record<string, string>
   });
 }
 
+const MAX_ATTEMPTS = 5;
+const MAX_BACKOFF_MS = 60_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Parse a Retry-After header. The spec allows either delta-seconds or an
+ * HTTP-date; providers use both. Returns null when absent or unparseable so
+ * the caller falls back to exponential backoff.
+ */
+function retryAfterMs(headers: PostResult['headers']): number | null {
+  const raw = headers['retry-after'];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (!value) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const at = Date.parse(value);
+  if (Number.isNaN(at)) return null;
+  return Math.max(0, at - Date.now());
+}
+
+/**
+ * postJSON with retries on the two statuses that are worth retrying: 429
+ * (rate limited) and 5xx (provider-side transient). Everything else, including
+ * 4xx auth and validation errors, returns unchanged on the first attempt —
+ * retrying a bad key just wastes 5 minutes.
+ *
+ * This matters because embedding providers rate-limit aggressively on free
+ * tiers. Voyage without a payment method on file allows 3 requests/minute and
+ * 10K tokens/minute; embed-wiki.js sends 16 pages per request, so a wiki of
+ * more than ~48 pages exceeds that inside the first minute. Without retries
+ * the whole run dies on the fourth batch with the pages from the first three
+ * already committed — a silent partial embed.
+ *
+ * Progress is reported on stderr, never stdout: callers parse stdout as JSON.
+ */
+async function postJSONWithRetry(
+  urlStr: string,
+  body: unknown,
+  headers: Record<string, string>,
+  label: string,
+): Promise<PostResult> {
+  let res: PostResult = await postJSON(urlStr, body, headers);
+  for (let attempt = 1; attempt < MAX_ATTEMPTS; attempt++) {
+    if (res.status !== 429 && res.status < 500) return res;
+    const wait = retryAfterMs(res.headers) ?? Math.min(MAX_BACKOFF_MS, 5000 * 2 ** (attempt - 1));
+    console.error(`[embed] ${label} ${res.status}, retry ${attempt}/${MAX_ATTEMPTS - 1} in ${Math.round(wait / 1000)}s`);
+    await sleep(wait);
+    res = await postJSON(urlStr, body, headers);
+  }
+  return res;
+}
+
 function openai(): EmbeddingProvider {
   const model = process.env.PROWORKFLOW_EMBED_MODEL || 'text-embedding-3-small';
   const dim = model === 'text-embedding-3-large' ? 3072 : 1536;
   return {
     name: 'openai', model, dim,
     async embed(texts) {
-      const res = await postJSON('https://api.openai.com/v1/embeddings', { input: texts, model }, { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` });
+      const res = await postJSONWithRetry('https://api.openai.com/v1/embeddings', { input: texts, model }, { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` }, 'openai');
       if (res.status >= 400) throw new Error(`openai embeddings ${res.status}: ${res.body.slice(0, 200)}`);
       const data = JSON.parse(res.body);
       return data.data.map((d: { embedding: number[] }) => Float32Array.from(d.embedding));
@@ -58,7 +119,7 @@ function voyage(): EmbeddingProvider {
   return {
     name: 'voyage', model, dim: 1024,
     async embed(texts) {
-      const res = await postJSON('https://api.voyageai.com/v1/embeddings', { input: texts, model }, { Authorization: `Bearer ${process.env.VOYAGE_API_KEY}` });
+      const res = await postJSONWithRetry('https://api.voyageai.com/v1/embeddings', { input: texts, model }, { Authorization: `Bearer ${process.env.VOYAGE_API_KEY}` }, 'voyage');
       if (res.status >= 400) throw new Error(`voyage embeddings ${res.status}: ${res.body.slice(0, 200)}`);
       const data = JSON.parse(res.body);
       return data.data.map((d: { embedding: number[] }) => Float32Array.from(d.embedding));

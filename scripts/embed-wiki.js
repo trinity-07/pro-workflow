@@ -49,15 +49,33 @@ async function cmdAll(args) {
 
     const batchSize = 16;
     let done = 0;
-    for (let i = 0; i < todo.length; i += batchSize) {
-      const batch = todo.slice(i, i + batchSize);
-      const inputs = batch.map(p => `${p.title}\n\n${(p.content || '').slice(0, 8000)}`);
-      const vectors = await provider.embed(inputs);
-      for (let j = 0; j < batch.length; j++) {
-        helpers.upsertEmbedding(store.db, batch[j].id, provider, vectors[j]);
-        done++;
+    let batch_no = 0;
+    // Each batch is committed as it completes, so a throw mid-run leaves real
+    // work in the database. Report what landed instead of letting the stack
+    // trace swallow it — the caller needs to know how far it got to decide
+    // whether to re-run (which skips already-embedded pages) or investigate.
+    try {
+      for (let i = 0; i < todo.length; i += batchSize) {
+        batch_no = i / batchSize + 1;
+        const batch = todo.slice(i, i + batchSize);
+        const inputs = batch.map(p => `${p.title}\n\n${(p.content || '').slice(0, 8000)}`);
+        const vectors = await provider.embed(inputs);
+        for (let j = 0; j < batch.length; j++) {
+          helpers.upsertEmbedding(store.db, batch[j].id, provider, vectors[j]);
+          done++;
+        }
+        console.error(`[embed] ${done}/${todo.length}`);
       }
-      console.error(`[embed] ${done}/${todo.length}`);
+    } catch (e) {
+      console.log(JSON.stringify({
+        embedded: done,
+        total: todo.length,
+        failed_at_batch: batch_no,
+        provider: `${provider.name}:${provider.model}`,
+        error: e && e.message ? e.message : String(e),
+      }));
+      process.exitCode = 1;
+      return;
     }
     console.log(JSON.stringify({ embedded: done, provider: `${provider.name}:${provider.model}` }));
   } finally { store.close(); }
