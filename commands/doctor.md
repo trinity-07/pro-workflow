@@ -34,7 +34,9 @@ echo '{"tool_input":{"command":"git commit -m \"not conventional\""}}' | node "$
 
 # secret-scan: clean passes, hardcoded key blocks
 echo '{"tool_input":{"content":"hello"}}' | node "$CLAUDE_PLUGIN_ROOT/scripts/secret-scan.js" && echo "secret-scan pass: OK"
-echo '{"tool_input":{"content":"key=\"AKIAIOSFODNN7EXAMPLE\""}}' | node "$CLAUDE_PLUGIN_ROOT/scripts/secret-scan.js" 2>&1; test $? -eq 2 && echo "secret-scan block: OK"
+# The vector must NOT contain the word "example" - the scanner allowlists it,
+# so AKIAIOSFODNN7EXAMPLE is inert here and this line proves nothing with it.
+echo '{"tool_input":{"content":"aws_key = \"AKIA3QY7RTZB2MNPLW6K\""}}' | node "$CLAUDE_PLUGIN_ROOT/scripts/secret-scan.js" 2>&1; test $? -eq 2 && echo "secret-scan block: OK"
 
 # git-blast-radius: safe passes, destructive blocks
 echo '{"tool_input":{"command":"git status"}}' | node "$CLAUDE_PLUGIN_ROOT/scripts/git-blast-radius.js" && echo "git-blast-radius pass: OK"
