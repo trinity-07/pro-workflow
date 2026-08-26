@@ -322,15 +322,37 @@ function cmdCancel(args) {
 function cmdStatus() {
   const store = getStore();
   try {
+    // Drive this from `wikis`, not from `wiki_seeds`. Grouping the seed table
+    // reports only wikis that already have a research queue, so a wiki that is
+    // registered and has pages but has never been enrolled in the loop comes
+    // back as no row at all - and `wikis: []` then reads as "no wikis exist"
+    // when it means "no seed queues exist". A registered wiki must appear with
+    // zero counts, and `auto_research` tells you why it has none.
     const rows = store.db.prepare(`
-      SELECT wiki_slug,
-        SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending,
-        SUM(CASE WHEN status='active' THEN 1 ELSE 0 END) AS active,
-        SUM(CASE WHEN status='done' THEN 1 ELSE 0 END) AS done,
-        SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed
-      FROM wiki_seeds GROUP BY wiki_slug
+      SELECT w.slug AS wiki_slug,
+        w.auto_research,
+        COALESCE(SUM(CASE WHEN s.status='pending' THEN 1 ELSE 0 END), 0) AS pending,
+        COALESCE(SUM(CASE WHEN s.status='active'  THEN 1 ELSE 0 END), 0) AS active,
+        COALESCE(SUM(CASE WHEN s.status='done'    THEN 1 ELSE 0 END), 0) AS done,
+        COALESCE(SUM(CASE WHEN s.status='failed'  THEN 1 ELSE 0 END), 0) AS failed
+      FROM wikis w
+      LEFT JOIN wiki_seeds s ON s.wiki_slug = w.slug
+      GROUP BY w.slug, w.auto_research
+      ORDER BY w.slug
     `).all();
-    console.log(JSON.stringify({ kill_switch: fs.existsSync(STOP_FILE), wikis: rows }, null, 2));
+
+    // Seeds whose wiki row is gone would otherwise vanish silently.
+    const orphans = store.db.prepare(`
+      SELECT wiki_slug, COUNT(*) AS seeds
+      FROM wiki_seeds
+      WHERE wiki_slug NOT IN (SELECT slug FROM wikis)
+      GROUP BY wiki_slug
+      ORDER BY wiki_slug
+    `).all();
+
+    const out = { kill_switch: fs.existsSync(STOP_FILE), wikis: rows };
+    if (orphans.length) out.orphan_seed_queues = orphans;
+    console.log(JSON.stringify(out, null, 2));
   } finally { store.close(); }
 }
 
